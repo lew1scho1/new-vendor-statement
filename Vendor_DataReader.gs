@@ -55,6 +55,7 @@ function readVendorInvoicesFromInput(paymentMethodMap) {
 
   let validRowCount = 0;
   let invalidRowCount = 0;
+  let filteredCount = 0;
 
   for (let i = 0; i < inputData.length; i++) {
     const row = inputData[i];
@@ -70,6 +71,11 @@ function readVendorInvoicesFromInput(paymentMethodMap) {
 
     // 필수 필드 검증
     if (vendor && year && month && !isNaN(amount) && payYear && payMonth && payDate) {
+      // 날짜 필터 적용 (Common.gs의 DATA_FILTER_FROM_DATE 기준)
+      if (!shouldProcessInvoiceDate(year, month)) {
+        filteredCount++;
+        continue;
+      }
       validRowCount++;
 
       // 인보이스 객체 생성
@@ -104,6 +110,9 @@ function readVendorInvoicesFromInput(paymentMethodMap) {
   }
 
   Logger.log(`\nValid rows: ${validRowCount}, Invalid rows: ${invalidRowCount}`);
+  if (filteredCount > 0 && DATA_FILTER_FROM_DATE) {
+    Logger.log(`⚡ Filtered out ${filteredCount} rows before ${DATA_FILTER_FROM_DATE.year}/${DATA_FILTER_FROM_DATE.month}`);
+  }
 
   // 각 vendor/year/month별로 payment date 기준으로 정렬
   for (const vendor in invoices) {

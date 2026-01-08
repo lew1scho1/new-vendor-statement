@@ -201,9 +201,12 @@
       // ETC 벤더들의 데이터를 합산하여 invoicesData['ETC']에 저장
       invoicesData['ETC'] = {};
 
+      // Logger batching for ETC processing (Phase 1 optimization)
+      const etcLogBuffer = [];
+
       for (const etcVendorName of etcVendors) {
         if (invoicesData[etcVendorName]) {
-          Logger.log(`  Adding ${etcVendorName} to ETC aggregation`);
+          etcLogBuffer.push(`  Adding ${etcVendorName} to ETC aggregation`);
 
           for (const year in invoicesData[etcVendorName]) {
             if (!invoicesData['ETC'][year]) invoicesData['ETC'][year] = {};
@@ -216,6 +219,11 @@
             }
           }
         }
+      }
+
+      // Batch log output for ETC
+      if (etcLogBuffer.length > 0) {
+        Logger.log(etcLogBuffer.join('\n'));
       }
 
       Logger.log(`ETC aggregation completed`);
@@ -238,22 +246,25 @@
     // Outstanding 셀 추적을 위한 배열 (빨간색 텍스트로 표시할 셀)
     const outstandingCells = [];
 
+    // Logger batching for performance (Phase 1 optimization)
+    const logBuffer = [];
+
     for (const vendorName in structure.vendors) {
       const vendorRow = structure.vendors[vendorName].row;
 
       // 보호된 행이면 건너뛰기
       if (isProtectedRow(vendorRow, protectedRowIndices)) {
-        Logger.log(`⚠️ Skipping protected row ${vendorRow + 1} (vendor: ${vendorName})`);
+        logBuffer.push(`⚠️ Skipping protected row ${vendorRow + 1} (vendor: ${vendorName})`);
         continue;
       }
 
       // 해당 벤더의 인보이스 데이터가 있는지 확인
       if (!invoicesData[vendorName]) {
-        Logger.log(`No invoice data for vendor: ${vendorName}`);
+        logBuffer.push(`No invoice data for vendor: ${vendorName}`);
         continue;
       }
 
-      Logger.log(`\nProcessing vendor: ${vendorName} (row ${vendorRow + 1})`);
+      logBuffer.push(`\nProcessing vendor: ${vendorName} (row ${vendorRow + 1})`);
 
       // 각 year/month에 대해 처리
       for (const year in yearMonthCols) {
@@ -262,9 +273,14 @@
         for (const month in monthsInYear) {
           const startCol = monthsInYear[month]; // 1-based column index
 
+          // 날짜 필터: 필터 기준 이전 데이터는 건드리지 않음 (기존 값 보존)
+          if (!shouldProcessInvoiceDate(parseInt(year, 10), parseInt(month, 10))) {
+            continue; // 8월 이전 칸은 업데이트하지 않고 기존 값 유지
+          }
+
           // 해당 year/month의 인보이스가 있는지 확인
           if (!invoicesData[vendorName][year] || !invoicesData[vendorName][year][month]) {
-            // 인보이스 없음 - 8칸 모두 비우기
+            // 인보이스 없음 - 8칸 모두 비우기 (8월 이후만)
             for (let i = 0; i < VENDOR_CELLS_PER_MONTH; i++) {
               outputValues[vendorRow][startCol - 1 + i] = '';
             }
@@ -274,7 +290,7 @@
           // 인보이스 데이터 가져오기 및 제한 (vendorName 전달)
           const invoices = limitAndMergeInvoices(invoicesData[vendorName][year][month], vendorName);
 
-          Logger.log(`  ${year}-${month}: ${invoices.length} invoices`);
+          logBuffer.push(`  ${year}-${month}: ${invoices.length} invoices`);
 
           // 8칸 채우기 (최대 4개 인보이스)
           for (let i = 0; i < VENDOR_MAX_INVOICES; i++) {
@@ -298,9 +314,9 @@
                   row: vendorRow + 1,
                   col: amountColIndex + 1
                 });
-                Logger.log(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr} [OUTSTANDING]`);
+                logBuffer.push(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr} [OUTSTANDING]`);
               } else {
-                Logger.log(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr}`);
+                logBuffer.push(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr}`);
               }
             } else {
               // 인보이스 없음 - 빈 칸
@@ -310,6 +326,11 @@
           }
         }
       }
+    }
+
+    // Batch log output (Phase 1 optimization)
+    if (logBuffer.length > 0) {
+      Logger.log(logBuffer.join('\n'));
     }
 
     // 10. 시트에 값 쓰기

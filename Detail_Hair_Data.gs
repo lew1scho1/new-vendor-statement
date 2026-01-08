@@ -5,12 +5,13 @@
  */
 
 /**
- * Read HAIR detail data from INPUT.
- * @param {Array<string>} vendorNames
+ * Read ALL vendor detail data from INPUT (optimized - single read).
+ * This function reads INPUT and BASIC sheets once and returns data for all vendors.
+ * @param {Array<string>} vendorNames - Optional: specific vendors to include (if empty, reads all)
  * @return {object} Map of vendorName -> invoices array
  */
-function readHairDetailData(vendorNames) {
-  Logger.log('\n========== Reading HAIR Detail Data from INPUT ==========');
+function readAllVendorDetailData(vendorNames) {
+  Logger.log('\n========== Reading ALL Vendor Detail Data from INPUT (Optimized) ==========');
 
   const inputSheet = getSheet(SHEET_NAMES.INPUT);
   const basicSheet = getSheet(SHEET_NAMES.BASIC);
@@ -20,6 +21,7 @@ function readHairDetailData(vendorNames) {
     return {};
   }
 
+  // Read BASIC data once
   const basicData = basicSheet.getDataRange().getValues().slice(1);
   const paymentMethodMap = {};
 
@@ -31,16 +33,21 @@ function readHairDetailData(vendorNames) {
     }
   }
 
+  // Read INPUT data once
   const inputData = inputSheet.getDataRange().getValues().slice(1);
   const vendorData = {};
 
   // Initialize vendor data structure
-  for (const vendorName of vendorNames) {
-    if (vendorName) {
-      vendorData[vendorName] = [];
+  if (vendorNames && vendorNames.length > 0) {
+    for (const vendorName of vendorNames) {
+      if (vendorName) {
+        vendorData[vendorName] = [];
+      }
     }
   }
 
+  // Process all input data
+  let filteredCount = 0;
   for (let i = 0; i < inputData.length; i++) {
     const row = inputData[i];
     const vendor = normalizeVendorName(row[COLUMN_INDICES.INPUT.VENDOR - 1]);
@@ -54,41 +61,76 @@ function readHairDetailData(vendorNames) {
     const payDate = parseInt(row[COLUMN_INDICES.INPUT.PAY_DATE - 1], 10);
     const checkNum = String(row[COLUMN_INDICES.INPUT.CHECK_NUM - 1] || '').trim();
 
-    if (vendorData[vendor] !== undefined) {
-      if (year && month && day && !isNaN(amount) && payYear && payMonth && payDate) {
-        vendorData[vendor].push({
-          year: year,
-          month: month,
-          day: day,
-          invoice: invoice,
-          amount: amount,
-          payYear: payYear,
-          payMonth: payMonth,
-          payDate: payDate,
-          checkNum: checkNum,
-          paymentMethod: paymentMethodMap[vendor] || ''
-        });
-      }
+    if (!vendor) continue;
+
+    // 날짜 필터 적용 (Common.gs의 DATA_FILTER_FROM_DATE 기준)
+    if (!shouldProcessInvoiceDate(year, month)) {
+      filteredCount++;
+      continue;
+    }
+
+    // Initialize vendor if not in list (read all mode)
+    if (vendorData[vendor] === undefined) {
+      vendorData[vendor] = [];
+    }
+
+    if (year && month && day && !isNaN(amount) && payYear && payMonth && payDate) {
+      vendorData[vendor].push({
+        year: year,
+        month: month,
+        day: day,
+        invoice: invoice,
+        amount: amount,
+        payYear: payYear,
+        payMonth: payMonth,
+        payDate: payDate,
+        checkNum: checkNum,
+        paymentMethod: paymentMethodMap[vendor] || ''
+      });
     }
   }
 
+  // Sort invoices by date
+  const logBuffer = [];
   for (const vendor in vendorData) {
     vendorData[vendor].sort((a, b) => {
       if (a.year !== b.year) return a.year - b.year;
       if (a.month !== b.month) return a.month - b.month;
       return a.day - b.day;
     });
-    Logger.log(`${vendor}: ${vendorData[vendor].length} invoices`);
+    logBuffer.push(`${vendor}: ${vendorData[vendor].length} invoices`);
+  }
+
+  // Batch log output
+  if (logBuffer.length > 0) {
+    Logger.log(logBuffer.join('\n'));
+  }
+
+  Logger.log(`Total vendors with data: ${Object.keys(vendorData).length}`);
+  if (filteredCount > 0 && DATA_FILTER_FROM_DATE) {
+    Logger.log(`⚡ Filtered out ${filteredCount} invoices before ${DATA_FILTER_FROM_DATE.year}/${DATA_FILTER_FROM_DATE.month}`);
   }
 
   return vendorData;
 }
 
 /**
+ * Read HAIR detail data from INPUT.
+ * DEPRECATED: Use readAllVendorDetailData() for better performance.
+ * This function is kept for backward compatibility.
+ * @param {Array<string>} vendorNames
+ * @return {object} Map of vendorName -> invoices array
+ */
+function readHairDetailData(vendorNames) {
+  return readAllVendorDetailData(vendorNames);
+}
+
+/**
  * Populate HAIR detail data into the HAIR sheet.
  * @param {Array<string>} vendorNames
+ * @param {object} [preReadVendorData] - Optional pre-read vendor data (Phase 1 optimization)
  */
-function populateHairDetailData(vendorNames) {
+function populateHairDetailData(vendorNames, preReadVendorData) {
   Logger.log('\n========== Populating HAIR Detail Sheet ==========');
 
   const hairSheet = getSheet('HAIR');
@@ -100,7 +142,7 @@ function populateHairDetailData(vendorNames) {
   const UNIT_COLUMNS = 5;
   const TOTAL_UNITS = 4;
   const sheetVendorNames = getHairVendorNamesFromSheet(hairSheet, UNIT_COLUMNS, TOTAL_UNITS);
-  const vendorData = readHairDetailData(sheetVendorNames);
+  const vendorData = preReadVendorData || readHairDetailData(sheetVendorNames);
   const TOTAL_COLUMNS = UNIT_COLUMNS * sheetVendorNames.length;
   const yearBgColor = '#7db3a6';
   const spacerColor = '#fdee09';
@@ -255,8 +297,9 @@ function getHairVendorsFromBasic() {
 
 /**
  * Create and populate the HAIR sheet.
+ * @param {object} [preReadVendorData] - Optional pre-read vendor data (Phase 1 optimization)
  */
-function createAndPopulateHairSheet() {
+function createAndPopulateHairSheet(preReadVendorData) {
   Logger.log('\n========== Auto Create and Populate HAIR Sheet ==========');
 
   const hairVendors = getHairVendorsFromBasic();
@@ -284,7 +327,7 @@ function createAndPopulateHairSheet() {
   Logger.log(`Vendor names: ${vendorNames.join(', ')}`);
 
   createHairDetailSheet(vendorNames, vendorInfos);
-  populateHairDetailData(vendorNames);
+  populateHairDetailData(vendorNames, preReadVendorData);
 
   writeToLog('HAIR', `HAIR sheet created and populated (${hairVendors.length} vendors)`);
   Logger.log('\nHAIR sheet creation and population completed successfully');

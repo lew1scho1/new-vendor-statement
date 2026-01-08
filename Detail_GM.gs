@@ -7,8 +7,9 @@
 /**
  * Create and populate GM detail sheets (AMKO/GNS/JINNY/SHK).
  * Distributes GM vendors from BASIC into tabs, 4 per sheet.
+ * @param {object} [preReadVendorData] - Optional pre-read vendor data (Phase 1 optimization)
  */
-function createAndPopulateGmDetailSheets() {
+function createAndPopulateGmDetailSheets(preReadVendorData) {
   Logger.log('\n========== Auto Create and Populate GM Detail Sheets ==========');
 
   const gmVendors = getGmVendorsFromBasicRange();
@@ -39,7 +40,7 @@ function createAndPopulateGmDetailSheets() {
   for (const group of groups) {
     ensureSheetExists(group.name);
     prepareGmDetailSheetLayout(group.name, group.vendors, unitSize);
-    populateGmDetailSheetData(group.name, group.vendors, unitSize);
+    populateGmDetailSheetData(group.name, group.vendors, unitSize, preReadVendorData);
   }
 
   props.setProperty('GM_DETAIL_SHEETS', targetSheetNames.join(','));

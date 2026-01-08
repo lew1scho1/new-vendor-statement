@@ -11,8 +11,9 @@
  * @param {string[]} originalVendors - Original vendor names from BASIC
  * @param {Set<string>} etcVendorsInHarwin - Set of vendors that are ETC
  * @param {number} unitSize - Number of vendor columns per sheet
+ * @param {object} [preReadVendorData] - Optional pre-read vendor data (Phase 1 optimization)
  */
-function populateHarwinDetailSheetData(sheetName, displayVendorNames, originalVendors, etcVendorsInHarwin, unitSize) {
+function populateHarwinDetailSheetData(sheetName, displayVendorNames, originalVendors, etcVendorsInHarwin, unitSize, preReadVendorData) {
   Logger.log(`\n========== Populating HARWIN Detail Sheet: ${sheetName} ==========`);
 
   const sheet = getSheet(sheetName);
@@ -27,7 +28,7 @@ function populateHarwinDetailSheetData(sheetName, displayVendorNames, originalVe
   const spacerColor = '#fdee09';
 
   // Read data for all original vendors (including those mapped to ETC)
-  const vendorData = readHairDetailData(originalVendors);
+  const vendorData = preReadVendorData || readHairDetailData(originalVendors);
 
   // Build { year: { month: { displayName: [invoices] } } }
   const yearMonthMap = {};

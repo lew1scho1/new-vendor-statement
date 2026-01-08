@@ -154,7 +154,7 @@ function syncMonthlySummary() {
   Logger.log(`Found ${Object.keys(structure.vendors).length} vendors in MONTHLY sheet`);
   Logger.log(`Protected row indices: ${[...protectedRowIndices].join(', ')}`);
 
-  // Clear previous data for all vendors and all year/month columns
+  // Clear previous data ONLY for filtered date range (8월 이후만 클리어, 이전 데이터는 보존)
   for (const vendorName in structure.vendors) {
     // Skip protected rows (SUBTOTAL, etc.)
     if (isProtectedLabel(vendorName)) {
@@ -173,6 +173,11 @@ function syncMonthlySummary() {
       const colsForYear = yearMonthCols[year];
       if (!colsForYear) continue;
       for (const month in colsForYear) {
+        // 날짜 필터: 필터 기준 이후 데이터만 클리어 (이전 데이터는 보존)
+        if (!shouldProcessInvoiceDate(year, parseInt(month, 10))) {
+          continue; // 8월 이전 데이터는 클리어하지 않음
+        }
+
         const colIndex = colsForYear[month];
         if (outputValues[vendorInfo.row]) {
           outputValues[vendorInfo.row][colIndex - 1] = 0;

@@ -9,8 +9,9 @@
  * @param {string} sheetName
  * @param {string[]} vendorNames
  * @param {number} unitSize
+ * @param {object} [preReadVendorData] - Optional pre-read vendor data (Phase 1 optimization)
  */
-function populateGmDetailSheetData(sheetName, vendorNames, unitSize) {
+function populateGmDetailSheetData(sheetName, vendorNames, unitSize, preReadVendorData) {
   Logger.log(`\n========== Populating GM Detail Sheet: ${sheetName} ==========`);
 
   const sheet = getSheet(sheetName);
@@ -24,7 +25,7 @@ function populateGmDetailSheetData(sheetName, vendorNames, unitSize) {
   const yearBgColor = '#7db3a6';
   const spacerColor = '#fdee09';
 
-  const vendorData = readHairDetailData(vendorNames);
+  const vendorData = preReadVendorData || readHairDetailData(vendorNames);
 
   // Build { year: { month: { vendorName: [invoices] } } }
   const yearMonthMap = {};

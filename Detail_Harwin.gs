@@ -8,8 +8,9 @@
  * Create and populate HARWIN detail sheets (HARWIN-1, HARWIN-2, etc.).
  * Distributes HARWIN vendors from BASIC into tabs, 4 per sheet.
  * HARWIN vendors are those after UNION in BASIC sheet.
+ * @param {object} [preReadVendorData] - Optional pre-read vendor data (Phase 1 optimization)
  */
-function createAndPopulateHarwinDetailSheets() {
+function createAndPopulateHarwinDetailSheets(preReadVendorData) {
   Logger.log('\n========== Auto Create and Populate HARWIN Detail Sheets ==========');
 
   const harwinVendors = getHarwinVendorsFromBasicAfterUnion();
@@ -57,7 +58,7 @@ function createAndPopulateHarwinDetailSheets() {
 
     ensureSheetExists(group.name);
     prepareHarwinDetailSheetLayout(group.name, group.vendors, unitSize);
-    populateHarwinDetailSheetData(group.name, group.vendors, harwinVendors, etcVendorsInHarwin, unitSize);
+    populateHarwinDetailSheetData(group.name, group.vendors, harwinVendors, etcVendorsInHarwin, unitSize, preReadVendorData);
   }
 
   props.setProperty('HARWIN_DETAIL_SHEETS', targetSheetNames.join(','));

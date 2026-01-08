@@ -64,6 +64,44 @@ const GRAND_TOTAL_ROW = 1;
 
 const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
 
+// ========== 데이터 필터링 설정 ==========
+
+/**
+ * INPUT 데이터 필터링 기준 날짜
+ * 이 날짜 이전의 데이터는 처리하지 않습니다.
+ * null로 설정하면 모든 데이터를 처리합니다.
+ *
+ * 사용 예:
+ * - { year: 2025, month: 8 } : 2025년 8월 이전 데이터 제외 (8월부터 포함)
+ * - null : 모든 데이터 처리
+ */
+const DATA_FILTER_FROM_DATE = {
+  year: 2025,
+  month: 8  // 8월부터 처리 (8월 이전 데이터 제외)
+};
+
+/**
+ * 인보이스 날짜가 필터 기준을 통과하는지 확인
+ * @param {number} year - 인보이스 연도
+ * @param {number} month - 인보이스 월
+ * @return {boolean} true면 처리, false면 제외
+ */
+function shouldProcessInvoiceDate(year, month) {
+  if (!DATA_FILTER_FROM_DATE) return true;
+
+  const filterYear = DATA_FILTER_FROM_DATE.year;
+  const filterMonth = DATA_FILTER_FROM_DATE.month;
+
+  // year가 필터 연도보다 크면 처리
+  if (year > filterYear) return true;
+
+  // year가 필터 연도와 같으면 month 비교
+  if (year === filterYear && month >= filterMonth) return true;
+
+  // 그 외에는 제외
+  return false;
+}
+
 // ========== 공통 유틸리티 함수 ==========
 
 /**

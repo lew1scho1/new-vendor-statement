@@ -31,6 +31,7 @@ function readAndAggregateInputData() {
   const allInputVendors = new Set();
   let validRowCount = 0;
   let invalidRowCount = 0;
+  let filteredCount = 0;
 
   for (let i = 0; i < inputData.length; i++) {
     const row = inputData[i];
@@ -40,6 +41,11 @@ function readAndAggregateInputData() {
     const amount = parseFloat(row[COLUMN_INDICES.INPUT.AMOUNT - 1]);
 
     if (vendor && year && month && !isNaN(amount)) {
+      // 날짜 필터 적용 (Common.gs의 DATA_FILTER_FROM_DATE 기준)
+      if (!shouldProcessInvoiceDate(year, month)) {
+        filteredCount++;
+        continue;
+      }
       validRowCount++;
       allInputVendors.add(vendor);
       if (!summary[vendor]) summary[vendor] = {};
@@ -61,6 +67,9 @@ function readAndAggregateInputData() {
 
   Logger.log('\nValid rows processed: ' + validRowCount);
   Logger.log('Invalid rows skipped: ' + invalidRowCount);
+  if (filteredCount > 0 && DATA_FILTER_FROM_DATE) {
+    Logger.log(`⚡ Filtered out ${filteredCount} rows before ${DATA_FILTER_FROM_DATE.year}/${DATA_FILTER_FROM_DATE.month}`);
+  }
   Logger.log('Unique vendors in INPUT: ' + allInputVendors.size);
   Logger.log('INPUT Vendors: ' + [...allInputVendors].join(', '));
 
