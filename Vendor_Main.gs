@@ -243,8 +243,8 @@
     // 9. 각 벤더의 데이터 채우기
     Logger.log('\n========== Populating Vendor Invoice Data ==========');
 
-    // Outstanding 셀 추적을 위한 배열 (빨간색 텍스트로 표시할 셀)
-    const outstandingCells = [];
+    // 강조 셀 추적을 위한 배열 (빨간색 텍스트로 표시할 셀)
+    const highlightedCells = [];
 
     // Logger batching for performance (Phase 1 optimization)
     const logBuffer = [];
@@ -308,13 +308,13 @@
               const methodStr = formatPaymentMethod(invoice);
               outputValues[vendorRow][payDateColIndex] = `${dateStr}${methodStr}`;
 
-              // Outstanding인 경우 빨간색 표시를 위해 기록 (1-based row, col)
-              if (invoice.isOutstanding) {
-                outstandingCells.push({
+              // 강조 조건(Paid='O')인 경우 빨간색 표시를 위해 기록 (1-based row, col)
+              if (invoice.isHighlighted) {
+                highlightedCells.push({
                   row: vendorRow + 1,
                   col: amountColIndex + 1
                 });
-                logBuffer.push(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr} [OUTSTANDING]`);
+                logBuffer.push(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr} [HIGHLIGHT]`);
               } else {
                 logBuffer.push(`    Invoice ${i + 1}: $${invoice.amount} ${dateStr}${methodStr}`);
               }
@@ -369,18 +369,18 @@
 
             // 값이 있는 셀만 색상 적용
             if (outputValues[vendorRow][amountColIndex] !== '') {
-              // Outstanding 여부 확인
-              const isOutstandingCell = outstandingCells.some(c =>
+              // 강조 여부 확인
+              const isHighlightedCell = highlightedCells.some(c =>
                 c.row === vendorRow + 1 && c.col === amountColIndex + 1
               );
 
-              if (isOutstandingCell) {
-                // Outstanding: Amount (빨간색) - Date/Method (검은색)
+              if (isHighlightedCell) {
+                // Highlighted: Amount (빨간색) - Date/Method (검은색)
                 amountCell.setFontColor('#FF0000');
                 payDateCell.setFontColor('#000000');
-                Logger.log(`  Row ${vendorRow + 1}, Cols ${amountColIndex + 1}-${payDateColIndex + 1}: Outstanding (Red-Black)`);
+                Logger.log(`  Row ${vendorRow + 1}, Cols ${amountColIndex + 1}-${payDateColIndex + 1}: Highlighted (Red-Black)`);
               } else {
-                // Non-Outstanding: Amount (검은색) - Date/Method (검은색)
+                // Normal: Amount (검은색) - Date/Method (검은색)
                 amountCell.setFontColor('#000000');
                 payDateCell.setFontColor('#000000');
                 Logger.log(`  Row ${vendorRow + 1}, Cols ${amountColIndex + 1}-${payDateColIndex + 1}: Normal (Black-Black)`);
@@ -398,8 +398,8 @@
     Logger.log('\n========== VENDOR 동기화 완료 ==========');
     const etcVendorCount = etcVendors.size;
     const logMsg = etcVendorCount > 0
-      ? `VENDOR 시트 업데이트 완료 | Outstanding: ${outstandingCells.length}개 | ETC 벤더: ${etcVendorCount}개`
-      : `VENDOR 시트 업데이트 완료 | Outstanding: ${outstandingCells.length}개`;
+      ? `VENDOR 시트 업데이트 완료 | Highlighted: ${highlightedCells.length}개 | ETC 벤더: ${etcVendorCount}개`
+      : `VENDOR 시트 업데이트 완료 | Highlighted: ${highlightedCells.length}개`;
 
     writeToLog('VENDOR', logMsg);
   }

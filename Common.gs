@@ -82,7 +82,7 @@ const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SE
  */
 const DATA_FILTER_FROM_DATE = {
   year: 2025,
-  month: 8  // 2025년 8월부터 처리 (8월 이전 데이터 제외)
+  month: 1  // 2025년 1월부터 처리 (1월 이전 데이터 제외)
 };
 
 /**

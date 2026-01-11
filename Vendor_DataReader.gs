@@ -66,7 +66,7 @@ function readVendorInvoicesFromInput(paymentMethodMap) {
     const payYear = parseInt(row[COLUMN_INDICES.INPUT.PAY_YEAR - 1], 10);
     const payMonth = parseInt(row[COLUMN_INDICES.INPUT.PAY_MONTH - 1], 10);
     const payDate = parseInt(row[COLUMN_INDICES.INPUT.PAY_DATE - 1], 10);
-    const outstanding = String(row[COLUMN_INDICES.INPUT.OUTSTANDING - 1] || '').trim().toUpperCase();
+    const paidStatus = String(row[COLUMN_INDICES.INPUT.PAID - 1] || '').trim().toUpperCase();
     const checkNum = row[COLUMN_INDICES.INPUT.CHECK_NUM - 1];
 
     // 필수 필드 검증
@@ -86,7 +86,7 @@ function readVendorInvoicesFromInput(paymentMethodMap) {
         payDate: payDate,
         paymentMethod: paymentMethodMap[vendor] || 'UNKNOWN',
         checkNum: checkNum,
-        isOutstanding: outstanding === 'O'  // K열이 'O'인지 확인
+        isHighlighted: paidStatus === 'O'  // K열이 'O'이면 강조
       };
 
       // CRITICAL: VENDOR 탭의 year/month 헤더와 매칭하기 위해
@@ -99,7 +99,7 @@ function readVendorInvoicesFromInput(paymentMethodMap) {
 
       // 첫 5개만 로그 출력
       if (validRowCount <= 5) {
-        Logger.log(`Sample row ${i + 2}: ${vendor} PayDate:${payYear}-${payMonth}-${payDate} $${amount} Outstanding:${outstanding}`);
+        Logger.log(`Sample row ${i + 2}: ${vendor} PayDate:${payYear}-${payMonth}-${payDate} $${amount} Paid:${paidStatus}`);
       }
     } else {
       invalidRowCount++;
@@ -173,7 +173,7 @@ function mergeInvoicesBySamePaymentDate(invoices) {
     payDate: invoices[0].payDate,
     paymentMethod: invoices[0].paymentMethod,
     checkNum: invoices[0].checkNum,
-    isOutstanding: invoices[0].isOutstanding
+    isHighlighted: invoices[0].isHighlighted
   };
 
   for (let i = 1; i < invoices.length; i++) {
@@ -185,8 +185,8 @@ function mergeInvoicesBySamePaymentDate(invoices) {
         current.payDate === inv.payDate) {
       // 동일한 날짜면 amount만 합산
       current.amount += inv.amount;
-      // Outstanding 플래그: 하나라도 O면 true
-      current.isOutstanding = current.isOutstanding || inv.isOutstanding;
+      // Highlight 플래그: 하나라도 O면 true
+      current.isHighlighted = current.isHighlighted || inv.isHighlighted;
     } else {
       // 다른 날짜면 현재 것을 결과에 추가하고 새로 시작
       merged.push(current);
@@ -197,7 +197,7 @@ function mergeInvoicesBySamePaymentDate(invoices) {
         payDate: inv.payDate,
         paymentMethod: inv.paymentMethod,
         checkNum: inv.checkNum,
-        isOutstanding: inv.isOutstanding
+        isHighlighted: inv.isHighlighted
       };
     }
   }
@@ -226,7 +226,7 @@ function limitAndMergeInvoices(invoices, vendorName, etcVendorsData) {
   const alwaysMergeVendors = ['SNG', 'OUTRE'];
   if (alwaysMergeVendors.includes(vendorName.toUpperCase().trim())) {
     const totalAmount = mergedByDate.reduce((sum, inv) => sum + inv.amount, 0);
-    const hasAnyOutstanding = mergedByDate.some(inv => inv.isOutstanding);
+    const hasAnyHighlighted = mergedByDate.some(inv => inv.isHighlighted);
     return [{
       amount: totalAmount,
       payYear: mergedByDate[0].payYear,
@@ -234,7 +234,7 @@ function limitAndMergeInvoices(invoices, vendorName, etcVendorsData) {
       payDate: mergedByDate[0].payDate,
       paymentMethod: mergedByDate[0].paymentMethod,
       checkNum: mergedByDate[0].checkNum,
-      isOutstanding: hasAnyOutstanding
+      isHighlighted: hasAnyHighlighted
     }];
   }
 
@@ -254,14 +254,14 @@ function limitAndMergeInvoices(invoices, vendorName, etcVendorsData) {
     payDate: mergedByDate[3].payDate,
     paymentMethod: mergedByDate[3].paymentMethod,
     checkNum: mergedByDate[3].checkNum,
-    isOutstanding: false
+    isHighlighted: false
   };
 
   for (let i = 3; i < mergedByDate.length; i++) {
     merged.amount += mergedByDate[i].amount;
 
-    // Outstanding 플래그: 하나라도 O면 true
-    merged.isOutstanding = merged.isOutstanding || mergedByDate[i].isOutstanding;
+    // Highlight 플래그: 하나라도 O면 true
+    merged.isHighlighted = merged.isHighlighted || mergedByDate[i].isHighlighted;
 
     // 가장 빠른 payment date 사용
     const currentDate = new Date(merged.payYear, merged.payMonth - 1, merged.payDate);
