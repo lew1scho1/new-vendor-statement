@@ -137,10 +137,9 @@ function syncMonthlySummary() {
   // Analyze sheet structure (vendors, sections, protected rows)
   const structure = analyzeSheetStructure(monthlyValues);
 
-  // 4. 벤더 매칭 및 ETC 집계
-  const monthlyVendors = new Set(Object.keys(structure.vendors));
-  const etcData = aggregateEtcData(allInputVendors, monthlyVendors, summary);
-  const { etcDetails, etcSummary, unmatchedVendors } = etcData;
+  // 4. ETC 집계 (ETC 상세 시트의 A열 기준)
+  const etcData = aggregateEtcData(summary);
+  const { etcDetails, etcSummary, etcVendors } = etcData;
 
   // 5. 보호된 행과 열 백업
   const protectedRowsData = backupProtectedRows(monthlySheet, monthlyValues);
@@ -188,9 +187,13 @@ function syncMonthlySummary() {
 
   // 7. 새 데이터 채우기
   Logger.log('\n========== Populating Vendor Data ==========');
+  const etcVendorSet = new Set(etcVendors);
   for (const vendorName in summary) {
-    // Skip unmatched vendors as they'll be aggregated into ETC
-    if (unmatchedVendors.includes(vendorName)) continue;
+    // ETC 상세 시트에 정의된 벤더는 ETC로 집계하므로 개별 행에 넣지 않음
+    if (etcVendorSet.has(vendorName)) {
+      Logger.log(`Skipping ${vendorName} (ETC 벤더)`);
+      continue;
+    }
 
     if (!structure.vendors[vendorName]) continue;
     const vendorRow = structure.vendors[vendorName].row;
@@ -239,17 +242,71 @@ function syncMonthlySummary() {
   restoreProtectedColumnFormulas(monthlySheet, protectedColumnFormulas);
   restoreProtectedRows(monthlySheet, protectedRowsData.protectedRows, protectedRowsData.protectedFormulas, protectedRowsData.protectedValues);
 
-  // 11. ETC 상세 시트 업데이트
+  // 11. Apply alternating row colors to match VENDOR
+  applyAlternatingMonthlyRowColors(monthlySheet, structure);
+
+  // 12. ETC 상세 시트 업데이트
   if (Object.keys(etcDetails).length > 0) {
     updateEtcDetailsSheet(etcDetails, yearMonthCols);
   }
 
-  // 12. 완료 메시지 (LOG 시트에 기록)
+  // 13. 완료 메시지 (LOG 시트에 기록)
   Logger.log('\n========== MONTHLY 동기화 완료 ==========');
-  const etcVendorCount = Object.keys(etcDetails).length;
+  const etcVendorCount = etcVendors.length;
   const logMsg = etcVendorCount > 0
-    ? `MONTHLY 시트 업데이트 완료 | ETC 벤더: ${etcVendorCount}개 (${Object.keys(etcDetails).join(', ')})`
+    ? `MONTHLY 시트 업데이트 완료 | ETC 벤더: ${etcVendorCount}개 (${etcVendors.join(', ')})`
     : 'MONTHLY 시트 업데이트 완료';
 
   writeToLog('MONTHLY', logMsg);
+}
+
+/**
+ * Apply alternating row colors to MONTHLY based on VENDOR section colors.
+ * @param {Sheet} sheet - MONTHLY sheet
+ * @param {object} structure - Sheet structure info
+ */
+function applyAlternatingMonthlyRowColors(sheet, structure) {
+  Logger.log('\n========== Applying Alternating Monthly Row Colors ==========');
+
+  const vendorSheet = getSheet(SHEET_NAMES.VENDOR);
+  if (!vendorSheet) {
+    Logger.log('WARNING: VENDOR sheet not found. Skipping MONTHLY row color application.');
+    return;
+  }
+
+  // Match VENDOR colors
+  const hairColor = vendorSheet.getRange(6, 1).getBackground();
+  const gmColor = '#c4bee2';
+  const whiteColor = '#ffffff';
+
+  const sectionColors = {
+    'Section1': hairColor,
+    'Section2': gmColor,
+    'Section3': gmColor
+  };
+
+  for (const sectionName in structure.sections) {
+    const section = structure.sections[sectionName];
+    const sectionColor = sectionColors[sectionName];
+    if (!sectionColor) {
+      Logger.log(`WARNING: No color defined for ${sectionName}, skipping`);
+      continue;
+    }
+
+    const visibleRows = [];
+    for (let row = section.vendorStartRow; row <= section.vendorEndRow; row++) {
+      if (!sheet.isRowHiddenByUser(row + 1)) {
+        visibleRows.push(row);
+      }
+    }
+
+    let colorIndex = 0;
+    for (const row of visibleRows) {
+      const bgColor = (colorIndex % 2 === 0) ? whiteColor : sectionColor;
+      sheet.getRange(row + 1, 1, 1, sheet.getMaxColumns()).setBackground(bgColor);
+      colorIndex++;
+    }
+  }
+
+  Logger.log('\nAlternating row colors applied to MONTHLY');
 }

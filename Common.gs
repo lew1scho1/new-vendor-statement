@@ -12,6 +12,7 @@ const SHEET_NAMES = {
   MONTHLY: 'MONTHLY',
   VENDOR: 'VENDOR',
   BASIC: 'BASIC',
+  BUDGET: 'BUDGET',
   ETC_DETAILS: 'ETC 상세',
   LOG: 'LOG'
 };
@@ -27,8 +28,11 @@ const COLUMN_INDICES = {
     PAY_YEAR: 7,    // G열: Payment Year
     PAY_MONTH: 8,   // H열: Payment Month
     PAY_DATE: 9,    // I열: Payment Date
-    OUTSTANDING: 11, // K열: Outstanding (O/X/빈칸)
-    CHECK_NUM: 12   // L열: Check Number
+    DELIVERED: 10,  // J열: Delivered (O/X/빈칸)
+    PAID: 11,       // K열: Paid (O/X/빈칸)
+    CHECK_NUM: 12,   // L열: Check Number
+    UPS_TRACKING_START: 14, // N열: UPS Tracking 1
+    UPS_TRACKING_END: 23    // W열: UPS Tracking 10
   },
   BASIC: {
     VENDOR: 1,
@@ -68,16 +72,17 @@ const MONTH_NAMES = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SE
 
 /**
  * INPUT 데이터 필터링 기준 날짜
- * 이 날짜 이전의 데이터는 처리하지 않습니다.
+ * 이 날짜 이후의 데이터만 처리합니다.
  * null로 설정하면 모든 데이터를 처리합니다.
  *
  * 사용 예:
+ * - { year: 2025, month: 1 } : 2025년 1월 이전 데이터 제외 (1월부터 포함)
  * - { year: 2025, month: 8 } : 2025년 8월 이전 데이터 제외 (8월부터 포함)
- * - null : 모든 데이터 처리
+ * - null : 모든 데이터 처리 (제한 없음)
  */
 const DATA_FILTER_FROM_DATE = {
   year: 2025,
-  month: 8  // 8월부터 처리 (8월 이전 데이터 제외)
+  month: 8  // 2025년 8월부터 처리 (8월 이전 데이터 제외)
 };
 
 /**

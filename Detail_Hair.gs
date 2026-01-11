@@ -32,6 +32,17 @@ function createHairDetailSheet(vendorNames, vendorInfos) {
     hairSheet.getRange(5, 1, maxRows - 4, maxCols).clearContent();
   }
 
+  // Row 4: year row (merged) - will be updated with actual year during data population
+  const yearRange = hairSheet.getRange(4, 1, 1, TOTAL_COLUMNS);
+  yearRange.breakApart();
+  yearRange.merge();
+  yearRange.setValue('2025');
+  yearRange.setHorizontalAlignment('center');
+  yearRange.setVerticalAlignment('middle');
+  yearRange.setFontSize(18);
+  yearRange.setFontWeight('bold');
+  yearRange.setBackground('#7db3a6');
+
   applyDetailSheetBorders(hairSheet, TOTAL_COLUMNS, UNIT_COLUMNS);
 
   hairSheet.hideRows(1);

@@ -1,0 +1,10 @@
+**/**
+!*.gs
+!appsscript.json
+.git/**
+node_modules/**
+.vscode/**
+*.png
+*.jpg
+*.jpeg
+*.gif

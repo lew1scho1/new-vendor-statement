@@ -28,6 +28,14 @@ function populateGmDetailSheetData(sheetName, vendorNames, unitSize, preReadVend
   const vendorData = preReadVendorData || readHairDetailData(vendorNames);
 
   // Build { year: { month: { vendorName: [invoices] } } }
+  // 기존 배경색 및 병합 초기화 (5행부터 끝까지)
+  const maxRows = sheet.getMaxRows();
+  if (maxRows > 4) {
+    const dataRange = sheet.getRange(5, 1, maxRows - 4, TOTAL_COLUMNS);
+    dataRange.breakApart();
+    dataRange.setBackground(null);
+  }
+
   const yearMonthMap = {};
   const yearsSet = new Set();
 
@@ -47,6 +55,12 @@ function populateGmDetailSheetData(sheetName, vendorNames, unitSize, preReadVend
 
   const years = Array.from(yearsSet).sort((a, b) => a - b);
   let currentRow = 5;
+
+  // Update Row 4 with first year if we have data
+  if (years.length > 0) {
+    const yearCell = sheet.getRange(4, 1);
+    yearCell.setValue(years[0]);
+  }
 
   for (let y = 0; y < years.length; y++) {
     const year = years[y];
@@ -111,8 +125,12 @@ function populateGmDetailSheetData(sheetName, vendorNames, unitSize, preReadVend
 
       currentRow += maxCount;
 
-      // Insert spacer row between months (not after the last month of the year)
-      if (m < months.length - 1) {
+      // Insert spacer row between months
+      // Not after the last month of current year OR if next month is in a different year
+      const isLastMonth = (m === months.length - 1);
+      const isLastMonthOfYear = isLastMonth && (y < years.length - 1);
+
+      if (!isLastMonth) {
         const spacerRange = sheet.getRange(currentRow, 1, 1, TOTAL_COLUMNS);
         spacerRange.clearContent();
         spacerRange.setBackground(spacerColor);

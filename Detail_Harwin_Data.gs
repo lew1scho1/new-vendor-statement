@@ -31,6 +31,14 @@ function populateHarwinDetailSheetData(sheetName, displayVendorNames, originalVe
   const vendorData = preReadVendorData || readHairDetailData(originalVendors);
 
   // Build { year: { month: { displayName: [invoices] } } }
+  // 기존 배경색 및 병합 초기화 (5행부터 끝까지)
+  const maxRows = sheet.getMaxRows();
+  if (maxRows > 4) {
+    const dataRange = sheet.getRange(5, 1, maxRows - 4, TOTAL_COLUMNS);
+    dataRange.breakApart();
+    dataRange.setBackground(null);
+  }
+
   const yearMonthMap = {};
   const yearsSet = new Set();
 
@@ -134,8 +142,11 @@ function populateHarwinDetailSheetData(sheetName, displayVendorNames, originalVe
 
       currentRow += maxCount;
 
-      // Insert spacer row between months (not after the last month of the year)
-      if (m < months.length - 1) {
+      // Insert spacer row between months
+      // Not after the last month of current year
+      const isLastMonth = (m === months.length - 1);
+
+      if (!isLastMonth) {
         const spacerRange = sheet.getRange(currentRow, 1, 1, TOTAL_COLUMNS);
         spacerRange.clearContent();
         spacerRange.setBackground(spacerColor);

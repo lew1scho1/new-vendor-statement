@@ -19,9 +19,20 @@ function updateEtcDetailsSheet(etcDetails, yearMonthCols) {
   if (!etcSheet) {
     etcSheet = ss.insertSheet(SHEET_NAMES.ETC_DETAILS);
     Logger.log(`Created new sheet: ${SHEET_NAMES.ETC_DETAILS}`);
-  } else {
-    etcSheet.clear();
-    Logger.log(`Cleared existing sheet: ${SHEET_NAMES.ETC_DETAILS}`);
+  }
+
+  // 기존 A열 (회사 이름) 읽기
+  const existingVendors = [];
+  const lastRow = etcSheet.getLastRow();
+  if (lastRow > 1) {
+    const vendorColumn = etcSheet.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let i = 0; i < vendorColumn.length; i++) {
+      const vendorName = String(vendorColumn[i][0] || '').trim();
+      if (vendorName) {
+        existingVendors.push(vendorName);
+      }
+    }
+    Logger.log(`기존 ETC 벤더 ${existingVendors.length}개 유지: ${existingVendors.join(', ')}`);
   }
 
   // Prepare headers: Vendor, Year-Month columns
@@ -38,63 +49,71 @@ function updateEtcDetailsSheet(etcDetails, yearMonthCols) {
 
   Logger.log(`Headers: ${headers.join(', ')}`);
 
-  // Prepare data rows
-  const rows = [headers];
+  // 데이터 영역만 초기화 (헤더와 A열 제외한 나머지)
+  if (lastRow > 1) {
+    const maxCols = etcSheet.getMaxColumns();
+    if (maxCols > 1) {
+      etcSheet.getRange(2, 2, lastRow - 1, maxCols - 1).clearContent();
+    }
+  }
 
-  for (const vendorName in etcDetails) {
+  // 헤더 업데이트
+  etcSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+  // 기존 A열 벤더에 대한 데이터만 업데이트
+  const rows = [];
+  for (const vendorName of existingVendors) {
     const row = [vendorName];
 
     for (const year of allYears) {
       const months = Object.keys(yearMonthCols[year]).sort((a, b) => parseInt(a) - parseInt(b));
       for (const month of months) {
-        const amount = etcDetails[vendorName][year]?.[month] || 0;
+        const amount = etcDetails[vendorName]?.[year]?.[month] || 0;
         row.push(amount);
       }
     }
 
     rows.push(row);
-    Logger.log(`Added ETC vendor: ${vendorName}`);
   }
 
   // Write to sheet
-  if (rows.length > 1) {
-    etcSheet.getRange(1, 1, rows.length, headers.length).setValues(rows);
-
-    // Format header row
-    const headerRange = etcSheet.getRange(1, 1, 1, headers.length);
-    headerRange.setFontWeight('bold');
-    headerRange.setBackground('#e8f0fe');
-
-    // Auto-resize columns
-    for (let i = 1; i <= headers.length; i++) {
-      etcSheet.autoResizeColumn(i);
-    }
-
-    Logger.log(`ETC Details sheet updated with ${rows.length - 1} vendors`);
+  if (rows.length > 0) {
+    etcSheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+    Logger.log(`ETC Details sheet updated with ${rows.length} vendors`);
   } else {
-    Logger.log('No ETC data to write');
+    Logger.log('No existing vendors found in ETC Details sheet');
+  }
+
+  // Format header row
+  const headerRange = etcSheet.getRange(1, 1, 1, headers.length);
+  headerRange.setFontWeight('bold');
+  headerRange.setBackground('#e8f0fe');
+
+  // Auto-resize columns
+  for (let i = 1; i <= headers.length; i++) {
+    etcSheet.autoResizeColumn(i);
   }
 }
 
 /**
- * ETC 집계 로직 - 매칭되지 않은 벤더들을 ETC로 모음
- * @param {Set} allInputVendors - INPUT의 모든 벤더 Set
- * @param {Set} monthlyVendors - MONTHLY의 모든 벤더 Set
+ * ETC 집계 로직 - ETC 상세 시트의 A열에 있는 벤더들을 ETC로 모음
  * @param {object} summary - INPUT 데이터 집계 { vendor: { year: { month: amount } } }
- * @return {object} { etcDetails, etcSummary, unmatchedVendors }
+ * @return {object} { etcDetails, etcSummary, etcVendors }
  */
-function aggregateEtcData(allInputVendors, monthlyVendors, summary) {
+function aggregateEtcData(summary) {
   Logger.log('\n========== Aggregating ETC Data ==========');
 
-  const unmatchedVendors = [...allInputVendors].filter(v => !monthlyVendors.has(v));
+  // ETC 상세 시트에서 벤더 목록 읽기
+  const etcVendors = getEtcVendorsFromDetailsSheet();
+
   const etcDetails = {}; // { vendor: { year: { month: amount } } }
   const etcSummary = {}; // { year: { month: totalAmount } }
 
-  if (unmatchedVendors.length > 0) {
-    Logger.log(`Unmatched vendors will be added to ETC: ${unmatchedVendors.join(', ')}`);
+  if (etcVendors.size > 0) {
+    Logger.log(`ETC 벤더 (${etcVendors.size}개): ${[...etcVendors].join(', ')}`);
 
-    // Aggregate unmatched vendor data for ETC
-    for (const vendorName of unmatchedVendors) {
+    // ETC 상세 시트에 정의된 벤더들의 데이터를 ETC로 집계
+    for (const vendorName of etcVendors) {
       if (summary[vendorName]) {
         etcDetails[vendorName] = summary[vendorName];
 
@@ -110,12 +129,12 @@ function aggregateEtcData(allInputVendors, monthlyVendors, summary) {
 
     Logger.log(`ETC Summary:`, JSON.stringify(etcSummary, null, 2));
   } else {
-    Logger.log('No unmatched vendors - ETC will be empty');
+    Logger.log('No ETC vendors defined in ETC 상세 sheet - ETC will be empty');
   }
 
   return {
     etcDetails,
     etcSummary,
-    unmatchedVendors
+    etcVendors: [...etcVendors]
   };
 }

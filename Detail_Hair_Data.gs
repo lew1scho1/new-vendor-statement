@@ -148,6 +148,14 @@ function populateHairDetailData(vendorNames, preReadVendorData) {
   const spacerColor = '#fdee09';
 
   // Build { year: { month: { vendorName: [invoices] } } }
+  // 기존 배경색 및 병합 초기화 (5행부터 끝까지)
+  const maxRows = hairSheet.getMaxRows();
+  if (maxRows > 4) {
+    const dataRange = hairSheet.getRange(5, 1, maxRows - 4, TOTAL_COLUMNS);
+    dataRange.breakApart();
+    dataRange.setBackground(null);
+  }
+
   const yearMonthMap = {};
   const yearsSet = new Set();
 
@@ -168,16 +176,10 @@ function populateHairDetailData(vendorNames, preReadVendorData) {
   const years = Array.from(yearsSet).sort((a, b) => a - b);
   let currentRow = 5;
 
+  // Update Row 4 with first year if we have data
   if (years.length > 0) {
-    const yearRange = hairSheet.getRange(4, 1, 1, TOTAL_COLUMNS);
-    yearRange.breakApart();
-    yearRange.merge();
-    yearRange.setValue(years[0]);
-    yearRange.setHorizontalAlignment('center');
-    yearRange.setVerticalAlignment('middle');
-    yearRange.setFontSize(18);
-    yearRange.setFontWeight('bold');
-    yearRange.setBackground(yearBgColor);
+    const yearCell = hairSheet.getRange(4, 1);
+    yearCell.setValue(years[0]);
   }
 
   for (let y = 0; y < years.length; y++) {
@@ -243,8 +245,11 @@ function populateHairDetailData(vendorNames, preReadVendorData) {
 
       currentRow += maxCount;
 
-      // Insert spacer row between months (not after the last month of the year)
-      if (m < months.length - 1) {
+      // Insert spacer row between months
+      // Not after the last month of current year
+      const isLastMonth = (m === months.length - 1);
+
+      if (!isLastMonth) {
         const spacerRange = hairSheet.getRange(currentRow, 1, 1, TOTAL_COLUMNS);
         spacerRange.clearContent();
         spacerRange.setBackground(spacerColor);
