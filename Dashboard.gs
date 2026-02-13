@@ -324,17 +324,17 @@ function createEmailBody(today, budgetData, inputData) {
   html += `<h2 style="font-family: Arial, sans-serif; color: #555;">UPS Tracking Status</h2>`;
   const trackingData = getTrackingData();
   if (trackingData.length > 0) {
-    const trackingHeaders = ['Tracking #', 'Status', 'Location', 'Est. Delivery', 'Last Update'];
+    const trackingHeaders = ['Tracking #', 'Vendor', 'Status', 'Delivery Date', 'Keep?'];
     const trackingRows = trackingData.map(t => [
       t.trackingNumber,
+      t.vendor,
       t.status,
-      t.location,
-      t.estimatedDelivery ? t.estimatedDelivery : 'N/A',
-      t.lastUpdate
+      t.deliveryDate ? t.deliveryDate : 'N/A',
+      t.keep
     ]);
     html += createTable(trackingHeaders, trackingRows);
   } else {
-    html += '<p>No tracking information available. Run updateUPSTracking() to fetch latest data.</p>';
+    html += '<p>No tracking information available. Run refreshUPSTrackingList() to build the list.</p>';
   }
 
   return html;
@@ -363,10 +363,10 @@ function getTrackingData() {
     const row = data[i];
     trackingData.push({
       trackingNumber: row[0],
-      status: row[1],
-      location: row[2],
-      estimatedDelivery: row[3],
-      lastUpdate: row[4]
+      vendor: row[1],
+      status: row[3],
+      deliveryDate: row[4],
+      keep: row[5]
     });
   }
 

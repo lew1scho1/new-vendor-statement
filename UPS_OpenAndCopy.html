@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>UPS Open and Copy</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 16px; color: #1f1f1f; }
+      .meta { font-size: 13px; margin-bottom: 10px; }
+      .row { margin-bottom: 8px; }
+      textarea {
+        width: 100%;
+        height: 210px;
+        box-sizing: border-box;
+        font-family: Consolas, Monaco, monospace;
+        font-size: 12px;
+      }
+      button {
+        padding: 8px 12px;
+        border: 1px solid #c7c7c7;
+        background: #f5f5f5;
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .status { margin-top: 8px; font-size: 12px; color: #444; }
+      a { color: #1a73e8; }
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .btn {
+        min-width: 140px;
+        border-radius: 4px;
+      }
+      .btn-copy {
+        background: #f2f2f2;
+        color: #1f1f1f;
+      }
+      .btn-ups {
+        background: #c89a00;
+        border-color: #a57d00;
+        color: #111;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="meta">Tracking count: <b><?= totalCount ?></b></div>
+    <div class="actions">
+      <button class="btn btn-copy" onclick="copyNumbers()">트래킹 번호 복사</button>
+      <button class="btn btn-ups" onclick="openUps()">UPS 사이트 열기</button>
+    </div>
+    <a id="upsLink" href="<?= upsUrl ?>" target="_blank" rel="noopener noreferrer" style="display:none;">UPS</a>
+    <div class="row">
+      <textarea id="numbers" readonly><?= clipboardText ?></textarea>
+    </div>
+    <div class="status" id="status">필요하면 위 버튼/링크를 눌러 진행하세요.</div>
+
+    <script>
+      const UPS_URL_RAW = '<?= upsUrl ?>';
+      const UPS_URL = UPS_URL_RAW.replace(/^"+|"+$/g, '');
+      const linkEl = document.getElementById('upsLink');
+      linkEl.href = UPS_URL.startsWith('http') ? UPS_URL : ('https://www.ups.com/track?loc=en_US&requester=ST/');
+
+      async function copyNumbers() {
+        const area = document.getElementById('numbers');
+        const status = document.getElementById('status');
+        let ok = false;
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(area.value);
+            ok = true;
+          }
+        } catch (e) {}
+        if (!ok) {
+          area.focus();
+          area.select();
+          try {
+            ok = document.execCommand('copy');
+          } catch (e) {
+            ok = false;
+          }
+        }
+        status.textContent = ok ? '복사 완료.' : '자동 복사 실패. 텍스트 선택 후 Ctrl+C 사용.';
+      }
+
+      function openUps() {
+        const status = document.getElementById('status');
+        const linkEl = document.getElementById('upsLink');
+        linkEl.click();
+        status.textContent = 'UPS 사이트를 새 탭으로 열었습니다.';
+      }
+    </script>
+  </body>
+</html>

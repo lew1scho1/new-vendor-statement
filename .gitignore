@@ -1,0 +1,24 @@
+# Environment variables (if using clasp for local development)
+.env
+.env.local
+
+# Google Apps Script credentials
+.clasprc.json
+
+# Node modules (if using clasp)
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+ai log.md
+nul

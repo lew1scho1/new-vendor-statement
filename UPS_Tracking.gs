@@ -1,498 +1,381 @@
 /**
  * @OnlyCurrentDoc
- *
- * UPS_Tracking.gs
- * AfterShip API를 사용한 배송 추적
  */
 
-// AfterShip API 설정 (Script Properties에서 관리)
-const AFTERSHIP_CONFIG = {
-  API_KEY: PropertiesService.getScriptProperties().getProperty('AFTERSHIP_API_KEY'),
-  API_URL: 'https://api.aftership.com/v4',
-  BATCH_SIZE: 50 // Batch API 최대 크기
+const UPS_TRACKING_CONFIG = {
+  INPUT_SHEET: 'INPUT',
+  TRACKING_SHEET: 'TRACKING',
+  INPUT_VENDOR_COL: 1,  // A
+  INPUT_UPS_LINK_COL: 14, // N
+  TRACKING_HEADERS: ['Tracking #', 'Vendor', 'Input Row', 'Status Text', 'Delivery Date', 'Keep?', 'Paste Raw'],
+  SPECIAL_ROWS: [501, 505],
+  START_ROW: 507
 };
 
 /**
- * 배송 추적 정보를 업데이트하는 메인 함수
- * 하루 1회 자동 실행 (트리거 설정)
+ * Backward-compatible entry point.
+ * Use this for assigned buttons if needed.
  */
-function updateTrackingInfo() {
-  try {
-    // 1. INPUT 시트에서 배송 완료되지 않은 트래킹 번호 수집
-    const trackingNumbers = getActiveTrackingNumbers();
+function updateUPSTracking() {
+  refreshUPSTrackingList();
+}
 
-    if (trackingNumbers.length === 0) {
-      writeToLog('Tracking', '추적할 트래킹 번호가 없습니다.');
+/**
+ * Rebuilds TRACKING list from INPUT!N (rows 501, 505, and 507+).
+ * No external API call is made.
+ */
+function refreshUPSTrackingList() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const inputSheet = ss.getSheetByName(UPS_TRACKING_CONFIG.INPUT_SHEET);
+  const trackingSheet = getOrCreateTrackingSheet_(ss);
+  const ui = SpreadsheetApp.getUi();
+
+  if (!inputSheet) {
+    ui.alert('Sheet "INPUT" not found.');
+    return;
+  }
+
+  const existingMap = buildExistingTrackingMap_(trackingSheet);
+  const lastRow = inputSheet.getLastRow();
+  const candidateRows = buildCandidateRows_(lastRow);
+  const nextRows = [];
+  const seen = new Set();
+
+  candidateRows.forEach(rowNum => {
+    const vendor = String(inputSheet.getRange(rowNum, UPS_TRACKING_CONFIG.INPUT_VENDOR_COL).getValue() || '').trim();
+    const rawLink = String(inputSheet.getRange(rowNum, UPS_TRACKING_CONFIG.INPUT_UPS_LINK_COL).getValue() || '').trim();
+    if (!rawLink) return;
+
+    const trackingNums = extractTrackingNumbers_(rawLink);
+    if (trackingNums.length === 0) return;
+
+    trackingNums.forEach(trackingNum => {
+      const key = `${trackingNum}__${rowNum}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+
+      const existing = existingMap[key];
+      const statusText = existing ? existing.statusText : '';
+      const deliveryDate = existing ? existing.deliveryDate : '';
+      const pasteRaw = existing ? existing.pasteRaw : '';
+      const keep = computeKeepFlag_(statusText);
+
+      nextRows.push([
+        trackingNum,
+        vendor,
+        rowNum,
+        statusText,
+        deliveryDate,
+        keep,
+        pasteRaw
+      ]);
+    });
+  });
+
+  writeTrackingRows_(trackingSheet, nextRows);
+  const trackingNumbers = nextRows.map(r => String(r[0] || '')).filter(Boolean);
+  if (trackingNumbers.length > 0) {
+    showUPSOpenAndCopyDialog_(trackingNumbers);
+  }
+  ss.toast(`TRACKING list refreshed: ${nextRows.length} item(s).`, 'UPS Tracking', 5);
+}
+
+/**
+ * Parses user-pasted UPS full-page text in TRACKING!G and updates D/E/F.
+ */
+function parsePastedUPSResults() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const trackingSheet = getOrCreateTrackingSheet_(ss);
+  const lastRow = trackingSheet.getLastRow();
+
+  if (lastRow < 2) {
+    ss.toast('No tracking rows to parse.', 'UPS Tracking', 5);
+    return;
+  }
+
+  const rowCount = lastRow - 1;
+  const values = trackingSheet.getRange(2, 1, rowCount, 7).getValues();
+  const updates = [];
+  let updated = 0;
+  const globalRaw = values
+    .map(row => String(row[6] || '').trim())
+    .filter(Boolean)
+    .join('\n');
+
+  values.forEach(row => {
+    const trackingNum = String(row[0] || '').trim();
+
+    // Ignore noise rows created by multi-line paste (no tracking number in A).
+    if (!trackingNum) {
+      updates.push(['', '', '']);
       return;
     }
 
-    // 2. TRACKING 시트 준비
-    const trackingSheet = prepareTrackingSheet();
-
-    // 3. Batch API로 트래킹 정보 조회
-    const trackingResults = fetchTrackingBatch(trackingNumbers);
-
-    // 4. 결과를 TRACKING 시트에 저장
-    saveTrackingResults(trackingSheet, trackingResults);
-
-    // 5. 배송 완료 후 3일 지난 항목 자동 제거
-    cleanupOldDeliveries(trackingSheet);
-
-    writeToLog('Tracking', `${trackingResults.length}개 트래킹 정보 업데이트 완료`);
-
-  } catch (e) {
-    Logger.log(e);
-    writeToLog('Tracking', '오류 발생: ' + e.message);
-  }
-}
-
-/**
- * 셀 값에서 UPS 트래킹 번호 추출
- * @param {string} cellValue - 셀의 값 (링크 또는 트래킹 번호)
- * @return {string|null} 추출된 트래킹 번호 또는 null
- */
-function extractTrackingNumber(cellValue) {
-  if (!cellValue || cellValue.length === 0) {
-    return null;
-  }
-
-  // UPS 링크 패턴: https://www.ups.com/track?tracknum=1Z999AA10123456784
-  const linkPattern = /tracknum=([A-Z0-9]+)/i;
-  const linkMatch = cellValue.match(linkPattern);
-  if (linkMatch) {
-    return linkMatch[1];
-  }
-
-  // UPS 트래킹 번호 패턴 검증
-  // UPS 트래킹 번호는 보통 1Z로 시작하거나 특정 패턴을 따름
-  // 1Z + 6자리 + 10자리 = 총 18자리
-  const trackingPattern = /\b(1Z[A-Z0-9]{16})\b/i;
-  const trackingMatch = cellValue.match(trackingPattern);
-  if (trackingMatch) {
-    return trackingMatch[1].toUpperCase();
-  }
-
-  // 숫자와 대문자만 포함된 10-30자리 문자열 (다른 배송사 트래킹 번호도 포함)
-  const generalPattern = /^[A-Z0-9]{10,30}$/i;
-  if (generalPattern.test(cellValue)) {
-    return cellValue.toUpperCase();
-  }
-
-  return null;
-}
-
-/**
- * INPUT 시트에서 배송 완료되지 않은 트래킹 번호 수집
- * @return {Array<string>} 트래킹 번호 배열
- */
-function getActiveTrackingNumbers() {
-  const inputSheet = getSheet(SHEET_NAMES.INPUT);
-  if (!inputSheet) {
-    throw new Error('Could not find INPUT sheet.');
-  }
-
-  const data = inputSheet.getDataRange().getValues().slice(1); // 헤더 제외
-  const col = COLUMN_INDICES.INPUT;
-  const trackingNumbers = new Set();
-  const today = new Date();
-  const threeMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 3, 1);
-
-  for (const row of data) {
-    const year = parseInt(row[col.YEAR - 1], 10);
-    const month = parseInt(row[col.MONTH - 1], 10);
-
-    if (isNaN(year) || isNaN(month)) continue;
-
-    const invoiceDate = new Date(year, month - 1, 1);
-    if (invoiceDate < threeMonthsAgo) continue;
-
-    // 배송이 필요한 항목만 (DELIVERED == 'X')
-    const deliveredValue = String(row[col.DELIVERED - 1]).trim().toUpperCase();
-    if (deliveredValue !== 'X') continue;
-
-    // UPS 트래킹 번호 수집 (N열 ~ W열)
-    for (let i = col.UPS_TRACKING_START - 1; i < col.UPS_TRACKING_END; i++) {
-      const cellValue = String(row[i]).trim();
-      if (cellValue && cellValue.length > 0) {
-        // UPS 링크에서 트래킹 번호 추출 또는 직접 입력된 번호 사용
-        const trackingNumber = extractTrackingNumber(cellValue);
-        if (trackingNumber) {
-          trackingNumbers.add(trackingNumber);
-        }
-      }
+    const sourceRaw = globalRaw;
+    if (!sourceRaw) {
+      updates.push([row[3] || '', row[4] || '', computeKeepFlag_(row[3] || '')]);
+      return;
     }
-  }
 
-  return Array.from(trackingNumbers);
-}
+    const scopedRaw = sliceTrackingBlockByNumber_(sourceRaw, trackingNum);
+    const parsedStatus = extractStatusText_(scopedRaw) || extractStatusText_(sourceRaw);
+    const parsedDate = extractDeliveryDateText_(scopedRaw) || extractDeliveryDateText_(sourceRaw);
+    const keep = computeKeepFlag_(parsedStatus);
 
-/**
- * TRACKING 시트 준비 (없으면 생성)
- * @return {Sheet} TRACKING 시트
- */
-function prepareTrackingSheet() {
-  const ss = getActiveSpreadsheet();
-  let trackingSheet = ss.getSheetByName('TRACKING');
-
-  if (!trackingSheet) {
-    trackingSheet = ss.insertSheet('TRACKING');
-    // 헤더 추가
-    const headers = ['Tracking Number', 'Courier', 'Status', 'Location', 'Estimated Delivery', 'Last Update', 'Delivered Date'];
-    trackingSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-    trackingSheet.getRange(1, 1, 1, headers.length)
-      .setFontWeight('bold')
-      .setBackground('#e8f0fe');
-    trackingSheet.setFrozenRows(1);
-  }
-
-  return trackingSheet;
-}
-
-/**
- * AfterShip Batch API로 트래킹 정보 조회
- * @param {Array<string>} trackingNumbers - 트래킹 번호 배열
- * @return {Array<object>} 트래킹 결과 배열
- */
-function fetchTrackingBatch(trackingNumbers) {
-  const apiKey = AFTERSHIP_CONFIG.API_KEY;
-
-  // API 키가 설정되지 않은 경우 더미 데이터 반환
-  if (!apiKey) {
-    writeToLog('Tracking', 'AfterShip API Key가 설정되지 않았습니다. setupAfterShipCredentials()를 실행하세요.');
-    return trackingNumbers.map(num => ({
-      trackingNumber: num,
-      courier: 'ups',
-      status: 'Pending',
-      location: 'Setup API Key',
-      estimatedDelivery: null,
-      lastUpdate: new Date(),
-      deliveredDate: null
-    }));
-  }
-
-  const results = [];
-
-  // Batch 크기로 나누어 처리
-  for (let i = 0; i < trackingNumbers.length; i += AFTERSHIP_CONFIG.BATCH_SIZE) {
-    const batch = trackingNumbers.slice(i, i + AFTERSHIP_CONFIG.BATCH_SIZE);
-
-    try {
-      const batchResults = fetchAfterShipBatch(batch, apiKey);
-      results.push(...batchResults);
-
-      // Rate limit 방지
-      if (i + AFTERSHIP_CONFIG.BATCH_SIZE < trackingNumbers.length) {
-        Utilities.sleep(1000);
-      }
-
-    } catch (e) {
-      Logger.log(`Batch ${i} error: ${e.message}`);
-      // 에러 발생 시 해당 배치는 에러 상태로 추가
-      batch.forEach(num => {
-        results.push({
-          trackingNumber: num,
-          courier: 'ups',
-          status: 'ERROR',
-          location: e.message,
-          estimatedDelivery: null,
-          lastUpdate: new Date(),
-          deliveredDate: null
-        });
-      });
-    }
-  }
-
-  return results;
-}
-
-/**
- * AfterShip API로 단일 배치 조회
- * @param {Array<string>} trackingNumbers - 트래킹 번호 배열
- * @param {string} apiKey - AfterShip API Key
- * @return {Array<object>} 트래킹 결과
- */
-function fetchAfterShipBatch(trackingNumbers, apiKey) {
-  const results = [];
-
-  // AfterShip은 개별 조회만 지원하므로 각 트래킹 번호를 순차 조회
-  for (const trackingNum of trackingNumbers) {
-    try {
-      const result = fetchSingleTracking(trackingNum, apiKey);
-      if (result) {
-        results.push(result);
-      }
-
-      // Rate limit 방지 (초당 10회 제한)
-      Utilities.sleep(100);
-
-    } catch (e) {
-      Logger.log(`Tracking ${trackingNum} error: ${e.message}`);
-      results.push({
-        trackingNumber: trackingNum,
-        courier: 'ups',
-        status: 'ERROR',
-        location: e.message.substring(0, 100),
-        estimatedDelivery: null,
-        lastUpdate: new Date(),
-        deliveredDate: null
-      });
-    }
-  }
-
-  return results;
-}
-
-/**
- * AfterShip API로 단일 트래킹 조회
- * @param {string} trackingNumber - 트래킹 번호
- * @param {string} apiKey - AfterShip API Key
- * @return {object} 트래킹 결과
- */
-function fetchSingleTracking(trackingNumber, apiKey) {
-  // URL 인코딩된 트래킹 번호
-  const encodedTracking = encodeURIComponent(trackingNumber);
-  const url = `${AFTERSHIP_CONFIG.API_URL}/trackings/ups/${encodedTracking}`;
-
-  const options = {
-    method: 'get',
-    headers: {
-      'Content-Type': 'application/json',
-      'aftership-api-key': apiKey
-    },
-    muteHttpExceptions: true
-  };
-
-  const response = UrlFetchApp.fetch(url, options);
-  const responseCode = response.getResponseCode();
-
-  if (responseCode === 404) {
-    // 트래킹 정보가 없으면 등록 시도
-    return createAndFetchTracking(trackingNumber, apiKey);
-  }
-
-  if (responseCode !== 200) {
-    throw new Error(`API Error: ${responseCode} - ${response.getContentText()}`);
-  }
-
-  const data = JSON.parse(response.getContentText());
-
-  if (data.data && data.data.tracking) {
-    return parseTrackingData(data.data.tracking);
-  }
-
-  return null;
-}
-
-/**
- * AfterShip에 트래킹 등록 후 조회
- * @param {string} trackingNumber - 트래킹 번호
- * @param {string} apiKey - AfterShip API Key
- * @return {object} 트래킹 결과
- */
-function createAndFetchTracking(trackingNumber, apiKey) {
-  // 1. 트래킹 등록
-  const createUrl = `${AFTERSHIP_CONFIG.API_URL}/trackings`;
-  const createPayload = {
-    tracking: {
-      tracking_number: trackingNumber,
-      slug: 'ups'
-    }
-  };
-
-  const createOptions = {
-    method: 'post',
-    headers: {
-      'Content-Type': 'application/json',
-      'aftership-api-key': apiKey
-    },
-    payload: JSON.stringify(createPayload),
-    muteHttpExceptions: true
-  };
-
-  const createResponse = UrlFetchApp.fetch(createUrl, createOptions);
-  const createCode = createResponse.getResponseCode();
-
-  if (createCode !== 201 && createCode !== 200) {
-    throw new Error(`Create failed: ${createCode} - ${createResponse.getContentText()}`);
-  }
-
-  const createData = JSON.parse(createResponse.getContentText());
-
-  if (createData.data && createData.data.tracking) {
-    return parseTrackingData(createData.data.tracking);
-  }
-
-  return null;
-}
-
-/**
- * AfterShip 트래킹 데이터 파싱
- * @param {object} tracking - AfterShip tracking 객체
- * @return {object} 파싱된 트래킹 정보
- */
-function parseTrackingData(tracking) {
-  const lastCheckpoint = tracking.checkpoints && tracking.checkpoints.length > 0
-    ? tracking.checkpoints[tracking.checkpoints.length - 1]
-    : null;
-
-  const location = lastCheckpoint
-    ? `${lastCheckpoint.city || ''}, ${lastCheckpoint.state || ''}`.trim().replace(/^,\s*/, '')
-    : '';
-
-  // 배송 완료 여부 확인
-  const isDelivered = tracking.tag === 'Delivered';
-  const deliveredDate = isDelivered && lastCheckpoint
-    ? new Date(lastCheckpoint.checkpoint_time)
-    : null;
-
-  return {
-    trackingNumber: tracking.tracking_number,
-    courier: tracking.slug,
-    status: tracking.tag || 'Unknown',
-    location: location || 'N/A',
-    estimatedDelivery: tracking.expected_delivery ? new Date(tracking.expected_delivery) : null,
-    lastUpdate: new Date(),
-    deliveredDate: deliveredDate
-  };
-}
-
-
-/**
- * 트래킹 결과를 TRACKING 시트에 저장
- * @param {Sheet} sheet - TRACKING 시트
- * @param {Array<object>} results - 트래킹 결과 배열
- */
-function saveTrackingResults(sheet, results) {
-  // 기존 데이터 읽기
-  const existingData = sheet.getDataRange().getValues();
-  const existingMap = new Map();
-
-  // 헤더 제외하고 기존 데이터를 Map으로 저장
-  for (let i = 1; i < existingData.length; i++) {
-    const trackingNum = existingData[i][0];
-    existingMap.set(trackingNum, existingData[i]);
-  }
-
-  // 새 데이터로 업데이트
-  results.forEach(r => {
-    existingMap.set(r.trackingNumber, [
-      r.trackingNumber,
-      r.courier,
-      r.status,
-      r.location,
-      r.estimatedDelivery || '',
-      r.lastUpdate,
-      r.deliveredDate || ''
-    ]);
+    updates.push([parsedStatus, parsedDate, keep]);
+    updated += 1;
   });
 
-  // 시트 초기화 후 새 데이터 작성
-  const lastRow = sheet.getLastRow();
-  if (lastRow > 1) {
-    sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).clearContent();
-  }
-
-  const rows = Array.from(existingMap.values());
-  if (rows.length > 0) {
-    sheet.getRange(2, 1, rows.length, 7).setValues(rows);
-
-    // 날짜 포맷 설정
-    sheet.getRange(2, 5, rows.length, 1).setNumberFormat('yyyy-mm-dd');
-    sheet.getRange(2, 6, rows.length, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
-    sheet.getRange(2, 7, rows.length, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
-  }
+  trackingSheet.getRange(2, 4, updates.length, 3).setValues(updates);
+  cleanupNoiseRows_(trackingSheet);
+  ss.toast(`Parsed pasted results for ${updated} row(s).`, 'UPS Tracking', 5);
 }
 
 /**
- * 배송 완료 후 3일 지난 항목 자동 제거
- * @param {Sheet} sheet - TRACKING 시트
+ * Legacy menu compatibility.
  */
-function cleanupOldDeliveries(sheet) {
-  const data = sheet.getDataRange().getValues();
-  const today = new Date();
-  const threeDaysAgo = new Date(today.getTime() - (3 * 24 * 60 * 60 * 1000));
-
-  const rowsToKeep = [data[0]]; // 헤더 유지
-
-  for (let i = 1; i < data.length; i++) {
-    const row = data[i];
-    const status = row[2]; // Status 컬럼
-    const deliveredDate = row[6]; // Delivered Date 컬럼
-
-    // 배송 완료되지 않았거나, 배송 완료 후 3일 이내인 경우 유지
-    if (status !== 'Delivered' || !deliveredDate || new Date(deliveredDate) >= threeDaysAgo) {
-      rowsToKeep.push(row);
-    }
-  }
-
-  // 데이터 다시 작성
-  sheet.clearContents();
-  if (rowsToKeep.length > 0) {
-    sheet.getRange(1, 1, rowsToKeep.length, rowsToKeep[0].length).setValues(rowsToKeep);
-
-    // 헤더 포맷
-    sheet.getRange(1, 1, 1, rowsToKeep[0].length)
-      .setFontWeight('bold')
-      .setBackground('#e8f0fe');
-
-    // 날짜 포맷
-    if (rowsToKeep.length > 1) {
-      sheet.getRange(2, 5, rowsToKeep.length - 1, 1).setNumberFormat('yyyy-mm-dd');
-      sheet.getRange(2, 6, rowsToKeep.length - 1, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
-      sheet.getRange(2, 7, rowsToKeep.length - 1, 1).setNumberFormat('yyyy-mm-dd hh:mm:ss');
-    }
-  }
-
-  const removedCount = data.length - rowsToKeep.length;
-  if (removedCount > 0) {
-    writeToLog('Tracking', `배송 완료 후 3일 지난 항목 ${removedCount}개 제거됨`);
-  }
+function updateTrackingInfo() {
+  refreshUPSTrackingList();
 }
 
 /**
- * AfterShip API 설정을 Script Properties에 저장
- * 최초 1회 실행 필요
+ * Legacy menu compatibility.
+ */
+function sendTrackingEmail() {
+  SpreadsheetApp.getUi().alert(
+    'UPS Tracking',
+    'Email summary for tracking is deprecated in manual UPS mode. Use TRACKING sheet directly.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+/**
+ * Legacy menu compatibility.
  */
 function setupAfterShipCredentials() {
-  const ui = SpreadsheetApp.getUi();
-
-  const apiKey = ui.prompt(
-    'AfterShip API Key 입력',
-    'AfterShip API Key를 입력하세요:\n(https://admin.aftership.com/settings/api-keys)',
-    ui.ButtonSet.OK_CANCEL
+  SpreadsheetApp.getUi().alert(
+    'UPS Tracking',
+    'AfterShip/API setup is disabled. This file now works with manual paste parsing only.',
+    SpreadsheetApp.getUi().ButtonSet.OK
   );
-
-  if (apiKey.getSelectedButton() === ui.Button.OK) {
-    const key = apiKey.getResponseText().trim();
-
-    if (key) {
-      PropertiesService.getScriptProperties().setProperty('AFTERSHIP_API_KEY', key);
-      ui.alert('성공', 'AfterShip API Key가 저장되었습니다.\n\nupdateTrackingInfo() 함수를 실행하여 트래킹 정보를 가져올 수 있습니다.', ui.ButtonSet.OK);
-    } else {
-      ui.alert('오류', 'API Key를 입력해주세요.', ui.ButtonSet.OK);
-    }
-  }
 }
 
 /**
- * 트리거 설정 (하루 1회 자동 실행)
- * 최초 1회 실행 필요
+ * Legacy menu compatibility.
  */
 function setupDailyTrigger() {
-  // 기존 트리거 제거
-  const triggers = ScriptApp.getProjectTriggers();
-  triggers.forEach(trigger => {
-    if (trigger.getHandlerFunction() === 'updateTrackingInfo') {
-      ScriptApp.deleteTrigger(trigger);
-    }
+  SpreadsheetApp.getUi().alert(
+    'UPS Tracking',
+    'Auto API tracking trigger is disabled. Use refreshUPSTrackingList() and parsePastedUPSResults() manually.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+/**
+ * Legacy menu compatibility.
+ */
+function setupDailyTrackingWithEmail() {
+  SpreadsheetApp.getUi().alert(
+    'UPS Tracking',
+    'Auto tracking + email mode is disabled in manual UPS mode.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+}
+
+function getOrCreateTrackingSheet_(ss) {
+  let sheet = ss.getSheetByName(UPS_TRACKING_CONFIG.TRACKING_SHEET);
+  if (!sheet) sheet = ss.insertSheet(UPS_TRACKING_CONFIG.TRACKING_SHEET);
+  ensureTrackingHeader_(sheet);
+  return sheet;
+}
+
+function ensureTrackingHeader_(sheet) {
+  sheet.getRange(1, 1, 1, UPS_TRACKING_CONFIG.TRACKING_HEADERS.length)
+    .setValues([UPS_TRACKING_CONFIG.TRACKING_HEADERS])
+    .setFontWeight('bold');
+  sheet.setFrozenRows(1);
+  sheet.setColumnWidth(1, 210);
+  sheet.setColumnWidth(2, 170);
+  sheet.setColumnWidth(3, 90);
+  sheet.setColumnWidth(4, 240);
+  sheet.setColumnWidth(5, 160);
+  sheet.setColumnWidth(6, 70);
+  sheet.setColumnWidth(7, 430);
+}
+
+function buildCandidateRows_(lastRow) {
+  const rows = UPS_TRACKING_CONFIG.SPECIAL_ROWS.filter(r => r <= lastRow);
+  for (let r = UPS_TRACKING_CONFIG.START_ROW; r <= lastRow; r++) rows.push(r);
+  return rows;
+}
+
+function buildExistingTrackingMap_(sheet) {
+  const map = {};
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return map;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+  values.forEach(row => {
+    const trackingNum = String(row[0] || '').trim();
+    const inputRow = Number(row[2] || 0);
+    if (!trackingNum || !inputRow) return;
+    const key = `${trackingNum}__${inputRow}`;
+    map[key] = {
+      statusText: row[3] || '',
+      deliveryDate: row[4] || '',
+      pasteRaw: row[6] || ''
+    };
   });
 
-  // 새 트리거 생성 (매일 오전 8시~9시 사이)
-  ScriptApp.newTrigger('updateTrackingInfo')
-    .timeBased()
-    .everyDays(1)
-    .atHour(8)
-    .create();
+  return map;
+}
 
-  SpreadsheetApp.getUi().alert('트리거 설정 완료', '매일 오전 8시~9시에 자동으로 트래킹 정보가 업데이트됩니다.', SpreadsheetApp.getUi().ButtonSet.OK);
+function writeTrackingRows_(sheet, rows) {
+  const maxRows = sheet.getMaxRows();
+  if (maxRows > 1) sheet.getRange(2, 1, maxRows - 1, 7).clearContent();
+  if (rows.length === 0) return;
+  sheet.getRange(2, 1, rows.length, 7).setValues(rows);
+}
+
+function extractTrackingNumbers_(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return [];
+
+  const out = new Set();
+  const oneZAll = text.match(/\b1Z[0-9A-Z]{16}\b/gi) || [];
+  oneZAll.forEach(v => out.add(v.toUpperCase()));
+
+  const paramsRegex = /(?:tracknum|trakNumber|InquiryNumber\d+)=([A-Za-z0-9]+)/gi;
+  let m;
+  while ((m = paramsRegex.exec(text)) !== null) {
+    const candidate = String(m[1] || '').toUpperCase();
+    if (/^1Z[0-9A-Z]{16}$/.test(candidate)) out.add(candidate);
+  }
+
+  return Array.from(out);
+}
+
+function extractStatusText_(rawText) {
+  const lines = String(rawText || '')
+    .split(/\r?\n/)
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (lines.length === 0) return '';
+
+  const statusKeywords = [
+    'On the Way',
+    'In Transit',
+    'Out for Delivery',
+    'Delivered',
+    'Exception',
+    'Delay',
+    'Pending',
+    'Label Created'
+  ];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (let j = 0; j < statusKeywords.length; j++) {
+      if (line.toLowerCase().includes(statusKeywords[j].toLowerCase())) return line;
+    }
+  }
+
+  return lines[0].substring(0, 220);
+}
+
+function extractDeliveryDateText_(rawText) {
+  const lines = String(rawText || '')
+    .split(/\r?\n/)
+    .map(s => s.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!/(estimated delivery|scheduled delivery|expected delivery|delivery date|arriving|arrives)/i.test(line)) {
+      continue;
+    }
+    if (line.includes(':')) {
+      const value = line.split(':').slice(1).join(':').trim();
+      if (value) return value.substring(0, 120);
+    }
+    const nextLine = lines[i + 1] || '';
+    if (nextLine) return nextLine.substring(0, 120);
+  }
+
+  const text = String(rawText || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+
+  const phraseRegexes = [
+    /(?:Estimated|Scheduled|Expected)\s+delivery\s*:\s*([^.;\n\r]{1,120})/i,
+    /((?:Today|Tomorrow),\s*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:,\s*\d{4})?(?:\s+by\s+\d{1,2}:\d{2}\s*[AP]\.?M\.?)?)/i,
+    /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:,\s*\d{4})?(?:\s+by\s+\d{1,2}:\d{2}\s*[AP]\.?M\.?)?)/i,
+    /(\d{1,2}\/\d{1,2}\/\d{2,4})/
+  ];
+
+  for (let i = 0; i < phraseRegexes.length; i++) {
+    const m = text.match(phraseRegexes[i]);
+    if (m && m[1]) return m[1].trim();
+  }
+
+  return '';
+}
+
+function sliceTrackingBlockByNumber_(rawText, trackingNum) {
+  const raw = String(rawText || '');
+  const num = String(trackingNum || '').trim().toUpperCase();
+  if (!raw || !num) return raw;
+
+  const upperRaw = raw.toUpperCase();
+  const startIdx = upperRaw.indexOf(num);
+  if (startIdx < 0) return raw;
+
+  const afterStart = upperRaw.substring(startIdx + num.length);
+  const nextTracking = afterStart.match(/\b1Z[0-9A-Z]{16}\b/);
+  if (!nextTracking) return raw.substring(startIdx);
+
+  const endIdx = startIdx + num.length + nextTracking.index;
+  return raw.substring(startIdx, endIdx);
+}
+
+function computeKeepFlag_(statusText) {
+  const s = String(statusText || '').toLowerCase();
+  if (s.includes('delivered')) return 'N';
+  return 'Y';
+}
+
+function cleanupNoiseRows_(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const values = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+  const rowsToDelete = [];
+
+  values.forEach((row, idx) => {
+    const trackingNum = String(row[0] || '').trim();
+    const vendor = String(row[1] || '').trim();
+    const inputRow = String(row[2] || '').trim();
+    if (!trackingNum && !vendor && !inputRow) rowsToDelete.push(idx + 2);
+  });
+
+  for (let i = rowsToDelete.length - 1; i >= 0; i--) {
+    sheet.deleteRow(rowsToDelete[i]);
+  }
+}
+
+function buildUPSUrl_(trackingNumbers) {
+  return 'https://www.ups.com/track?loc=en_US&requester=ST/';
+}
+
+function showUPSOpenAndCopyDialog_(trackingNumbers) {
+  const template = HtmlService.createTemplateFromFile('UPS_OpenAndCopy');
+  template.upsUrl = buildUPSUrl_(trackingNumbers);
+  template.clipboardText = trackingNumbers.join('\n');
+  template.totalCount = trackingNumbers.length;
+
+  const html = template
+    .evaluate()
+    .setWidth(560)
+    .setHeight(420);
+
+  SpreadsheetApp.getUi().showModelessDialog(html, 'UPS Open + Clipboard');
 }

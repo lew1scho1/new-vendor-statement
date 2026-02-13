@@ -1,0 +1,8 @@
+.gitattributes text eol=lf
+.claspignore text eol=lf
+.gitignore text eol=lf
+*.gs text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+.env* text eol=lf
